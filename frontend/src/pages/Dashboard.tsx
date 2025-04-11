@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Box, Flex, Heading, Text, Grid, Button, Container, Theme } from '@radix-ui/themes';
+import { Box, Flex, Heading, Text, Grid, Button, Container } from '@radix-ui/themes';
 import { CheckCircledIcon, CrossCircledIcon, ClockIcon, GlobeIcon, ExclamationTriangleIcon } from '@radix-ui/react-icons';
 import { Link } from 'react-router-dom';
 import { getAllMonitors, Monitor } from '../api/monitors';
@@ -145,60 +145,58 @@ const Dashboard = () => {
   ];
 
   return (
-    <Theme appearance="light" accentColor="blue">
-      <Box className="dashboard-container">
-        <Container size="3" py="5">
-          <Box>
-            {/* 状态摘要 */}
-            <Box pb="6">
-              <Heading size="6" mb="5">{t('dashboard.summary')}</Heading>
+    <Box className="dashboard-container">
+      <Container size="3" py="5">
+        <Box>
+          {/* 状态摘要 */}
+          <Box pb="6">
+            <Heading size="6" mb="5">{t('dashboard.summary')}</Heading>
+            
+            <Flex gap="4" justify="between" direction={{ initial: 'column', sm: 'row' }} style={{ width: '100%' }}>
+              {/* API监控状态摘要 */}
+              <Box style={{ flex: 1 }}>
+                <StatusSummaryCard title={t('navbar.apiMonitors')} items={apiMonitorItems} />
+              </Box>
               
-              <Flex gap="4" justify="between" direction={{ initial: 'column', sm: 'row' }} style={{ width: '100%' }}>
-                {/* API监控状态摘要 */}
-                <Box style={{ flex: 1 }}>
-                  <StatusSummaryCard title={t('navbar.apiMonitors')} items={apiMonitorItems} />
-                </Box>
-                
-                {/* 客户端监控状态摘要 */}
-                <Box style={{ flex: 1 }}>
-                  <StatusSummaryCard title={t('navbar.agentMonitors')} items={agentStatusItems} />
-                </Box>
-              </Flex>
-            </Box>
-            
-            {/* API监控状态 */}
-            <Box py="5">
-              <Flex justify="between" align="center" mb="4">
-                <Heading size="5">{t('navbar.apiMonitors')}</Heading>
-                <Button variant="soft" asChild>
-                  <Link to="/monitors">{t('monitors.title')}</Link>
-                </Button>
-              </Flex>
-              <Grid columns={{ initial: '1', sm: '2', lg: '3' }} gap="4">
-                {monitors.slice(0, 3).map(monitor => (
-                  <MonitorCard key={monitor.id} monitor={monitor} />
-                ))}
-              </Grid>
-            </Box>
-            
-            {/* 客户端状态 */}
-            <Box py="5">
-              <Flex justify="between" align="center" mb="4">
-                <Heading size="5">{t('navbar.agentMonitors')}</Heading>
-                <Button variant="soft" asChild>
-                  <Link to="/agents">{t('agents.title')}</Link>
-                </Button>
-              </Flex>
-              <Grid columns={{ initial: '1', sm: '2', lg: '3' }} gap="4">
-                {agents.slice(0, 3).map((agent) => (
-                  <AgentCard key={agent.id} agent={agent} />
-                ))}
-              </Grid>
-            </Box>
+              {/* 客户端监控状态摘要 */}
+              <Box style={{ flex: 1 }}>
+                <StatusSummaryCard title={t('navbar.agentMonitors')} items={agentStatusItems} />
+              </Box>
+            </Flex>
           </Box>
-        </Container>
-      </Box>
-    </Theme>
+          
+          {/* API监控状态 */}
+          <Box py="5">
+            <Flex justify="between" align="center" mb="4">
+              <Heading size="5">{t('navbar.apiMonitors')}</Heading>
+              <Button variant="soft" asChild>
+                <Link to="/monitors">{t('monitors.title')}</Link>
+              </Button>
+            </Flex>
+            <Grid columns={{ initial: '1', sm: '2', lg: '3' }} gap="4">
+              {monitors.slice(0, 3).map(monitor => (
+                <MonitorCard key={monitor.id} monitor={monitor} />
+              ))}
+            </Grid>
+          </Box>
+          
+          {/* 客户端状态 */}
+          <Box py="5">
+            <Flex justify="between" align="center" mb="4">
+              <Heading size="5">{t('navbar.agentMonitors')}</Heading>
+              <Button variant="soft" asChild>
+                <Link to="/agents">{t('agents.title')}</Link>
+              </Button>
+            </Flex>
+            <Grid columns={{ initial: '1', sm: '2', lg: '3' }} gap="4">
+              {agents.slice(0, 3).map((agent) => (
+                <AgentCard key={agent.id} agent={agent} />
+              ))}
+            </Grid>
+          </Box>
+        </Box>
+      </Container>
+    </Box>
   );
 };
 

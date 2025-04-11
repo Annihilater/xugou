@@ -24,6 +24,4 @@ export interface D1Result<T = unknown> {
 // 通用绑定类型
 export type Bindings = {
   DB: D1Database;
-  JWT_SECRET: string;
-  ENABLE_DB_INIT?: string;
 }; 

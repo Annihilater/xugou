@@ -42,19 +42,76 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # 获取完整的 git 历史用于获取提交信息
 
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
         go-version: '1.24'
 
-    - name: Build
+    - name: Get version info
+      id: get_version
+      shell: bash
+      run: |
+        # 从 GitHub 环境获取版本信息
+        if [[ $GITHUB_REF == refs/tags/* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/}
+        else
+          VERSION="dev-$(git rev-parse --short HEAD)"
+        fi
+        COMMIT_HASH=$(git rev-parse --short HEAD)
+        BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "COMMIT_HASH=$COMMIT_HASH" >> $GITHUB_ENV
+        echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+        
+        echo "版本: $VERSION"
+        echo "提交哈希: $COMMIT_HASH"
+        echo "构建日期: $BUILD_DATE"
+
+    - name: Build Linux
+      if: matrix.os == 'ubuntu-latest'
       env:
-        GOOS: ${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'macos-latest' && 'darwin' || 'windows' }}
+        GOOS: linux
         GOARCH: ${{ matrix.arch }}
       run: |
         cd agent
-        go build -v -o ${{ matrix.artifact_name }} .
+        go build -v \
+          -ldflags="-s -w -extldflags=-static \
+          -X github.com/xugou/agent/cmd/agent.Version=${{ env.VERSION }} \
+          -X github.com/xugou/agent/cmd/agent.GitCommit=${{ env.COMMIT_HASH }} \
+          -X github.com/xugou/agent/cmd/agent.BuildDate=${{ env.BUILD_DATE }}" \
+          -tags netgo,osusergo -o ${{ matrix.artifact_name }} .
+        
+    - name: Build macOS
+      if: matrix.os == 'macos-latest'
+      env:
+        GOOS: darwin
+        GOARCH: ${{ matrix.arch }}
+      run: |
+        cd agent
+        go build -v \
+          -ldflags="-s -w \
+          -X github.com/xugou/agent/cmd/agent.Version=${{ env.VERSION }} \
+          -X github.com/xugou/agent/cmd/agent.GitCommit=${{ env.COMMIT_HASH }} \
+          -X github.com/xugou/agent/cmd/agent.BuildDate=${{ env.BUILD_DATE }}" \
+          -tags netgo,osusergo -o ${{ matrix.artifact_name }} .
+        
+    - name: Build Windows
+      if: matrix.os == 'windows-latest'
+      env:
+        GOOS: windows
+        GOARCH: ${{ matrix.arch }}
+      run: |
+        cd agent
+        go build -v `
+          -ldflags="-s -w `
+          -X github.com/xugou/agent/cmd/agent.Version=${{ env.VERSION }} `
+          -X github.com/xugou/agent/cmd/agent.GitCommit=${{ env.COMMIT_HASH }} `
+          -X github.com/xugou/agent/cmd/agent.BuildDate=${{ env.BUILD_DATE }}" `
+          -o ${{ matrix.artifact_name }} .
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4

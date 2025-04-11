@@ -18,12 +18,14 @@ func init() {
 	startCmd := &cobra.Command{
 		Use:   "start",
 		Short: "启动 Xugou Agent",
-		Long:  `启动 Xugou Agent 开始收集系统信息并上报到服务器`,
+		Long:  `启动 Xugou Agent 开始采集系统信息并上报到服务器`,
 		Run:   runStart,
 	}
 
-	startCmd.Flags().IntP("interval", "i", 60, "数据收集和上报间隔（秒）")
+	startCmd.Flags().IntP("interval", "i", 60, "数据采集和上报间隔（秒）")
+	startCmd.Flags().StringP("proxy", "p", "", "HTTP代理服务器地址（例如：http://proxy.example.com:8080）")
 	viper.BindPFlag("interval", startCmd.Flags().Lookup("interval"))
+	viper.BindPFlag("proxy", startCmd.Flags().Lookup("proxy"))
 
 	rootCmd.AddCommand(startCmd)
 }
@@ -33,6 +35,7 @@ func runStart(cmd *cobra.Command, args []string) {
 	token := viper.GetString("token")
 	server := viper.GetString("server")
 	interval := viper.GetInt("interval")
+	proxy := viper.GetString("proxy")
 
 	if token == "" {
 		fmt.Println("错误: 未设置 API 令牌，请使用 --token 参数或在配置文件中设置")
@@ -47,6 +50,9 @@ func runStart(cmd *cobra.Command, args []string) {
 	fmt.Println("Xugou Agent 启动中...")
 	fmt.Printf("服务器地址: %s\n", server)
 	fmt.Printf("收集间隔: %d秒\n", interval)
+	if proxy != "" {
+		fmt.Printf("使用代理服务器: %s\n", proxy)
+	}
 	fmt.Println("使用令牌自动注册/上报数据")
 
 	// 设置上下文，用于处理取消信号
@@ -55,16 +61,8 @@ func runStart(cmd *cobra.Command, args []string) {
 
 	// 初始化数据收集器和上报器
 	dataCollector := collector.NewCollector()
-	var dataReporter reporter.Reporter
-
-	// 根据配置决定使用哪种上报器
-	if server == "console" {
-		dataReporter = reporter.NewConsoleReporter()
-		fmt.Println("使用控制台上报器")
-	} else {
-		dataReporter = reporter.NewHTTPReporter(server, token)
-		fmt.Println("使用HTTP上报器")
-	}
+	dataReporter := reporter.NewHTTPReporter(server, token, proxy)
+	fmt.Println("使用HTTP上报器")
 
 	// 设置定时器，按指定间隔收集和上报数据
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
@@ -96,7 +94,7 @@ func collectAndReport(ctx context.Context, c collector.Collector, r reporter.Rep
 	// 收集系统信息
 	info, err := c.Collect(ctx)
 	if err != nil {
-		fmt.Printf("收集系统信息失败: %v\n", err)
+		fmt.Printf("采集系统信息失败: %v\n", err)
 		return
 	}
 

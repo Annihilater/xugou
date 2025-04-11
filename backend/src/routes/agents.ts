@@ -3,7 +3,7 @@ import { jwt } from 'hono/jwt';
 import { Context, Next } from 'hono';
 import { Bindings } from '../models/db';
 import { Agent } from '../models/agent';
-import { getJwtSecret, generateToken } from '../utils/jwt';
+import { getJwtSecret, generateToken, verifyToken } from '../utils/jwt';
 import { 
   getAllAgents, 
   getAgentsByUser,
@@ -62,7 +62,7 @@ agents.post('/', async (c) => {
     const { name } = await c.req.json();
     const payload = c.get('jwtPayload');
     
-    const token = await generateToken();
+    const token = await generateToken(c.env);
     
     // 创建新客户端
     const newAgent = await createAgent(c.env.DB, name, token, payload.id);
@@ -161,49 +161,6 @@ agents.put('/:id', async (c) => {
   }
 });
 
-// 更新客户端状态
-agents.post('/:id/status', async (c) => {
-  try {
-    const agentId = Number(c.req.param('id'));
-    const { 
-      cpu_usage, 
-      memory_total, 
-      memory_used, 
-      disk_total, 
-      disk_used, 
-      network_rx, 
-      network_tx,
-      hostname,
-      ip_address,
-      os,
-      version
-    } = await c.req.json();
-    
-    // 更新客户端状态和资源指标
-    const result = await updateAgentStatus(c.env.DB, agentId, 'active', {
-      cpu_usage,
-      memory_total,
-      memory_used,
-      disk_total,
-      disk_used,
-      network_rx,
-      network_tx,
-      hostname,
-      ip_address,
-      os,
-      version
-    });
-    
-    return c.json({ 
-      success: true, 
-      message: '客户端状态已更新'
-    });
-  } catch (error) {
-    console.error('更新客户端状态错误:', error);
-    return c.json({ success: false, message: '更新客户端状态失败' }, 500);
-  }
-});
-
 // 删除客户端
 agents.delete('/:id', async (c) => {
   try {
@@ -235,48 +192,11 @@ agents.delete('/:id', async (c) => {
   }
 });
 
-// 重新生成客户端令牌
-agents.post('/:id/token', async (c) => {
-  try {
-    const agentId = Number(c.req.param('id'));
-    const payload = c.get('jwtPayload');
-    
-    // 获取客户端信息
-    const agent = await getAgentById(c.env.DB, agentId);
-    
-    if (!agent) {
-      return c.json({ success: false, message: '客户端不存在' }, 404);
-    }
-    
-    // 检查权限
-    if (payload.role !== 'admin' && agent.created_by !== payload.id) {
-      return c.json({ success: false, message: '无权为此客户端重新生成令牌' }, 403);
-    }
-    
-    // 生成新令牌
-    const newToken = await generateToken();
-    
-    // 更新客户端令牌
-    const result = await updateAgentToken(c.env.DB, agent.id, newToken);
-    
-    return c.json({ 
-      success: true, 
-      message: '客户端令牌已重新生成',
-      token: newToken
-    });
-  } catch (error) {
-    console.error('重新生成客户端令牌错误:', error);
-    return c.json({ success: false, message: '重新生成客户端令牌失败' }, 500);
-  }
-});
-
-// 生成临时注册Token
+// 生成客户端Token
 agents.post('/token/generate', async (c) => {
   try {
-    const payload = c.get('jwtPayload');
-    
     // 生成新令牌
-    const newToken = await generateToken();
+    const newToken = await generateToken(c.env);
     
     // 可以选择将此token存储在临时表中，或者使用其他方式验证(例如，设置过期时间)
     // 这里为简化操作，只返回令牌
@@ -301,28 +221,28 @@ agents.post('/register', async (c) => {
       return c.json({ success: false, message: '缺少注册令牌' }, 400);
     }
     
+
+    // 通过token查找客户端
+    const existingAgent = await getAgentByToken(c.env.DB, token);
+
+    if (existingAgent) {
+      return c.json({ success: false, message: '客户端已存在' }, 400);
+    }
+
+
+    // 验证令牌
+    const tokenVerification = await verifyToken(token, c.env);
+    
+    // 如果令牌无效，返回错误
+    if (!tokenVerification.valid) {
+      return c.json({ 
+        success: false, 
+        message: `注册令牌无效: ${tokenVerification.message}` 
+      }, 401);
+    }
+    
     // 查找管理员用户作为客户端创建者
     const adminId = await getAdminUserId(c.env.DB);
-    
-    // 查找是否已存在使用相同token的客户端
-    const existingAgent = await getAgentByToken(c.env.DB, token);
-    
-    if (existingAgent) {
-      // 如果客户端已存在，更新其状态信息
-      await updateAgent(c.env.DB, existingAgent.id, {
-        status: 'active',
-        hostname,
-        ip_address,
-        os,
-        version
-      });
-      
-      return c.json({ 
-        success: true, 
-        message: '客户端状态更新成功',
-        agent: { id: existingAgent.id }
-      });
-    }
     
     // 如果客户端不存在，则创建新客户端
     const newAgent = await createAgent(

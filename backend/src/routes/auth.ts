@@ -8,7 +8,6 @@ import { getUserByUsername, createUser, getUserById } from '../db/auth';
 // 导入 D1 数据库类型
 type Bindings = {
   DB: D1Database;
-  JWT_SECRET: string;
 };
 
 interface D1Database {

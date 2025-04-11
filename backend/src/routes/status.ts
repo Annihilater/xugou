@@ -4,10 +4,8 @@ import { cors } from 'hono/cors';
 import { Bindings } from '../models/db';
 
 import {
-  StatusPageConfig as DbStatusPageConfig,
   Monitor,
   Agent,
-  getUserStatusPageConfig,
   getConfigMonitors,
   getConfigAgents,
   getStatusPageConfigById,
@@ -26,7 +24,7 @@ import {
   getAdminUserId,
   createDefaultConfig
 } from '../db/status';
-
+import { getJwtSecret } from '../utils/jwt';
 // 状态页配置接口
 interface StatusPageConfig {
   title: string;
@@ -48,18 +46,10 @@ const adminRoutes = new Hono<{ Bindings: Bindings }>();
 
 // 使用中间件验证JWT（仅对管理员路由）
 adminRoutes.use('/*', async (c, next) => {
-  try {
-    // 使用环境变量中的JWT密钥进行验证
-    const jwtMiddleware = jwt({
-      secret: c.env.JWT_SECRET,
-    });
-    
-    // 执行JWT认证
-    return await jwtMiddleware(c, next);
-  } catch (error) {
-    console.error('JWT验证失败:', error);
-    return c.json({ error: '未授权' }, 401);
-  }
+  const jwtMiddleware = jwt({
+    secret: getJwtSecret(c)
+  });
+  return jwtMiddleware(c, next);
 });
 
 // 获取状态页配置(管理员)

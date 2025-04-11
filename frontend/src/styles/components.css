@@ -623,7 +623,7 @@ button[data-state="active"][role="tab"]::after,
   left: 0;
   width: 100%;
   height: 2px;
-  background-color: var(--blue-9);
+  background-color: transparent;
   transform: scaleX(1);
   transform-origin: center;
 }
@@ -828,3 +828,24 @@ textarea:focus {
 .footer-link-icon {
   margin-right: 8px;
 } 
+
+/* 覆盖 Radix UI TabsTrigger 底部边框 */
+html body .rt-TabsTrigger:where([data-state='active'])::before,
+html body .rt-TabsTrigger[data-state='active']::before {
+  background-color: none !important;
+  display: none !important;
+  height: 0 !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
+/* 确保所有相关的伪元素都被覆盖 */
+html body button[role="tab"][data-state="active"]::before,
+html body [role="tab"][data-state="active"]::before,
+html body .tab-trigger[data-state="active"]::before {
+  background-color: none !important;
+  display: none !important;
+  height: 0 !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
