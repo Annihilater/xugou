@@ -17,7 +17,7 @@ const Layout = ({ children }: LayoutProps) => {
   const { t } = useTranslation();
   
   return (
-    <Theme appearance="light" accentColor="blue">
+    <Theme appearance="light">
       <Flex direction="column" className="layout-container">
         {/* 顶部导航栏 */}
         <Navbar />

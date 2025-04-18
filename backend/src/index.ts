@@ -1,90 +1,37 @@
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
-import { cors } from 'hono/cors';
 import { Bindings } from './models/db';
 import { prettyJSON } from 'hono/pretty-json';
-import { checkAndInitializeDatabase } from './setup/initCheck';
+import { checkAndInitializeDatabase } from './initialization/initCheck';
 import { ExecutionContext } from 'hono';
-
+import { corsMiddleware } from './middlewares';
+import { jwtMiddleware } from './middlewares/auth';
 // 添加全局变量声明
 declare global {
   var isInitialized: boolean;
-  namespace NodeJS {
-    interface ProcessEnv {
-      NODE_ENV?: string;
-      PORT?: string;
-      JWT_SECRET?: string;
-    }
-  }
-}
-
-// 定义 D1 数据库类型
-interface D1Database {
-  prepare(query: string): D1PreparedStatement;
-  dump(): Promise<ArrayBuffer>;
-  batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
-  exec<T = unknown>(query: string): Promise<D1Result<T>>;
-}
-
-interface D1PreparedStatement {
-  bind(...values: any[]): D1PreparedStatement;
-  first<T = unknown>(colName?: string): Promise<T>;
-  run<T = unknown>(): Promise<D1Result<T>>;
-  all<T = unknown>(): Promise<D1Result<T>>;
-  raw<T = unknown>(): Promise<T[]>;
-}
-
-interface D1Result<T = unknown> {
-  results?: T[];
-  success: boolean;
-  error?: string;
-  meta?: object;
 }
 
 // 导入路由
-import authRoutes from './routes/auth';
-import monitorRoutes from './routes/monitors';
-import agentRoutes from './routes/agents';
-import userRoutes from './routes/users';
-import statusRoutes from './routes/status';
-import initDbRoutes from './setup/database';
-import { monitorTask, runScheduledTasks } from './tasks';
-import notificationsRouter from './routes/notifications';
+import authRoutes from './api/auth';
+import monitorRoutes from './api/monitors';
+import agentRoutes from './api/agents';
+import userRoutes from './api/users';
+import statusRoutes from './api/status';
+import initDbRoutes from './initialization/database';
+import { monitorTask, runScheduledTasks } from './jobs';
+import notifications from './api/notifications';
 
 // 创建Hono应用
 const app = new Hono<{ Bindings: Bindings }>();
 
 // 中间件，需要作为服务端接收所有来源客户端的请求
 app.use('*', logger());
-app.use('*', cors({
-  origin: (origin) => origin || '*',
-  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
-  exposeHeaders: ['Content-Length', 'Content-Type'],
-  maxAge: 86400,
-  credentials: true,
-}));
+app.use('*', corsMiddleware);
 app.use('*', prettyJSON());
-
-// 在 Workers 环境中，您可能需要设置这些响应头
-app.use('*', async (c, next) => {
-  await next();
-  c.header('Access-Control-Allow-Origin', c.req.header('origin') || '*');
-  c.header('Access-Control-Allow-Credentials', 'true');
-});
+app.use('*', jwtMiddleware);
 
 // 公共路由
 app.get('/', (c) => c.json({ message: 'XUGOU API 服务正在运行' }));
-
-// 获取 JWT 密钥
-const getJwtSecret = (c: any) => {
-  // 在 Cloudflare Workers 环境中，使用 env 变量
-  if (typeof process === 'undefined') {
-    return c.env.JWT_SECRET || 'your-secret-key-change-in-production';
-  }
-  // 在 Node.js 环境中，使用 process.env
-  return process.env.JWT_SECRET || 'your-secret-key-change-in-production';
-};
 
 // 路由注册
 app.route('/api/auth', authRoutes);
@@ -93,7 +40,7 @@ app.route('/api/agents', agentRoutes);
 app.route('/api/users', userRoutes);
 app.route('/api/status', statusRoutes);
 app.route('/api', initDbRoutes);
-app.route('/api/notifications', notificationsRouter);
+app.route('/api/notifications', notifications);
 
 // 添加监控检查触发路由
 app.get('/api/trigger-check', async (c) => {
@@ -119,6 +66,20 @@ export default {
       globalThis.isInitialized = true;
     }
 
+    // 如果是 OPTIONS 请求，直接处理
+    if (request.method === 'OPTIONS') {
+      console.log('Worker入口层面: 捕获到OPTIONS请求，直接返回');
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+          'Access-Control-Max-Age': '86400',
+        }
+      });
+    }
+
     try {
       // 如果数据库尚未初始化，则进行初始化检查
       if (!dbInitialized) {
@@ -135,12 +96,29 @@ export default {
       }
       
       // 处理请求
-      return app.fetch(request, env, ctx);
+      const response = await app.fetch(request, env, ctx);
+      
+      // 确保所有响应都有正确的CORS头
+      const newHeaders = new Headers(response.headers);
+      newHeaders.set('Access-Control-Allow-Origin', '*');
+      newHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+      
+      // 创建新的响应，保留原始状态和正文，但确保CORS头存在
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: newHeaders
+      });
     } catch (error) {
       console.error('请求处理错误:', error);
+      // 即使在错误响应中也添加CORS头
       return new Response(JSON.stringify({ error: '服务器内部错误' }), {
         status: 500,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH' 
+        }
       });
     }
   },

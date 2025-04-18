@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/xugou/agent/pkg/collector"
@@ -21,6 +22,7 @@ type Reporter interface {
 type HTTPReporter struct {
 	serverURL      string
 	apiToken       string
+	proxyURL       string
 	client         *http.Client
 	lastNetworkRX  uint64    // 上次网络接收字节数
 	lastNetworkTX  uint64    // 上次网络发送字节数
@@ -29,42 +31,67 @@ type HTTPReporter struct {
 }
 
 // NewHTTPReporter 创建一个新的HTTP数据上报器
-func NewHTTPReporter(serverURL, apiToken string) Reporter {
+func NewHTTPReporter(serverURL, apiToken, proxyURL string) Reporter {
+	// 创建HTTP客户端
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	// 如果设置了代理，配置代理
+	if proxyURL != "" {
+		proxy, err := url.Parse(proxyURL)
+		if err != nil {
+			fmt.Printf("警告: 代理URL解析失败: %v，将不使用代理\n", err)
+		} else {
+			client.Transport = &http.Transport{
+				Proxy: http.ProxyURL(proxy),
+			}
+		}
+	}
+
 	return &HTTPReporter{
-		serverURL: serverURL,
-		apiToken:  apiToken,
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-		},
+		serverURL:      normalizeURL(serverURL),
+		apiToken:       apiToken,
+		proxyURL:       proxyURL,
+		client:         client,
 		lastUpdateTime: time.Now(),
 		registered:     false,
 	}
 }
 
+// normalizeURL 处理URL格式，确保URL末尾没有斜杠
+func normalizeURL(url string) string {
+	// 移除URL末尾的斜杠
+	if len(url) > 0 && url[len(url)-1] == '/' {
+		return url[:len(url)-1]
+	}
+	return url
+}
+
 // StatusPayload 定义上报到后端的数据结构
 type StatusPayload struct {
-	Token       string  `json:"token"` // API令牌
-	CPUUsage    float64 `json:"cpu_usage"`
-	MemoryTotal uint64  `json:"memory_total"`
-	MemoryUsed  uint64  `json:"memory_used"`
-	DiskTotal   uint64  `json:"disk_total"`
-	DiskUsed    uint64  `json:"disk_used"`
-	NetworkRX   uint64  `json:"network_rx"`
-	NetworkTX   uint64  `json:"network_tx"`
-	Hostname    string  `json:"hostname"`   // 主机名
-	IPAddress   string  `json:"ip_address"` // IP地址
-	OS          string  `json:"os"`         // 操作系统
-	Version     string  `json:"version"`    // 操作系统版本
+	Token       string   `json:"token"` // API令牌
+	CPUUsage    float64  `json:"cpu_usage"`
+	MemoryTotal uint64   `json:"memory_total"`
+	MemoryUsed  uint64   `json:"memory_used"`
+	DiskTotal   uint64   `json:"disk_total"`
+	DiskUsed    uint64   `json:"disk_used"`
+	NetworkRX   uint64   `json:"network_rx"`
+	NetworkTX   uint64   `json:"network_tx"`
+	Hostname    string   `json:"hostname"`     // 主机名
+	IPAddresses []string `json:"ip_addresses"` // IP地址列表
+	OS          string   `json:"os"`           // 操作系统
+	Version     string   `json:"version"`      // 操作系统版本
 }
 
 // RegisterPayload 定义注册到后端的数据结构
 type RegisterPayload struct {
-	Token     string `json:"token"`      // API令牌
-	Name      string `json:"name"`       // 客户端名称
-	Hostname  string `json:"hostname"`   // 主机名
-	IPAddress string `json:"ip_address"` // IP地址
-	OS        string `json:"os"`         // 操作系统
-	Version   string `json:"version"`    // 操作系统版本
+	Token       string   `json:"token"`        // API令牌
+	Name        string   `json:"name"`         // 客户端名称
+	Hostname    string   `json:"hostname"`     // 主机名
+	IPAddresses []string `json:"ip_addresses"` // IP地址列表
+	OS          string   `json:"os"`           // 操作系统
+	Version     string   `json:"version"`      // 操作系统版本
 }
 
 // RegisterResponse 定义注册响应结构
@@ -84,12 +111,12 @@ func (r *HTTPReporter) ensureRegistered(ctx context.Context, info *collector.Sys
 
 	// 构建注册的数据结构
 	payload := RegisterPayload{
-		Token:     r.apiToken,
-		Name:      info.Hostname,
-		Hostname:  info.Hostname,
-		IPAddress: getLocalIP(),
-		OS:        info.OS,
-		Version:   info.Version,
+		Token:       r.apiToken,
+		Name:        info.Hostname,
+		Hostname:    info.Hostname,
+		IPAddresses: getLocalIPs(),
+		OS:          info.OS,
+		Version:     info.Version,
 	}
 
 	// 将数据转换为JSON
@@ -118,7 +145,24 @@ func (r *HTTPReporter) ensureRegistered(ctx context.Context, info *collector.Sys
 	}
 	defer resp.Body.Close()
 
-	// 检查响应状态码
+	// 检查是否收到"客户端已存在"的响应
+	if resp.StatusCode == 400 {
+		var errorResponse RegisterResponse
+		decoder := json.NewDecoder(resp.Body)
+		if err := decoder.Decode(&errorResponse); err != nil {
+			return fmt.Errorf("解析错误响应失败: %w", err)
+		}
+
+		if errorResponse.Message == "客户端已存在" {
+			fmt.Printf("客户端已存在，将直接更新状态，token: %s\n", r.apiToken)
+			r.registered = true
+			return nil
+		}
+
+		return fmt.Errorf("注册失败: %s", errorResponse.Message)
+	}
+
+	// 检查其他错误状态码
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("服务器返回错误状态码: %d", resp.StatusCode)
 	}
@@ -145,13 +189,8 @@ func (r *HTTPReporter) ensureRegistered(ctx context.Context, info *collector.Sys
 	return nil
 }
 
-// Report 将系统信息上报到服务器
-func (r *HTTPReporter) Report(ctx context.Context, info *collector.SystemInfo) error {
-	// 确保客户端已注册
-	if err := r.ensureRegistered(ctx, info); err != nil {
-		return fmt.Errorf("客户端注册或状态更新失败: %w", err)
-	}
-
+// reportStatus 将系统信息上报到服务器，不检查注册状态
+func (r *HTTPReporter) reportStatus(ctx context.Context, info *collector.SystemInfo) error {
 	// 提取所有磁盘的总容量和使用量
 	var diskTotal, diskUsed uint64
 	for _, disk := range info.DiskInfo {
@@ -194,9 +233,9 @@ func (r *HTTPReporter) Report(ctx context.Context, info *collector.SystemInfo) e
 		NetworkRX:   uint64(networkRXRate),        // 网络接收速率（KB/s）
 		NetworkTX:   uint64(networkTXRate),        // 网络发送速率（KB/s）
 		Hostname:    info.Hostname,                // 添加主机名
-		OS:          info.OS,                      // 添加操作系统信息
-		Version:     info.Version,                 // 添加操作系统版本
-		IPAddress:   getLocalIP(),                 // 获取本地IP地址
+		IPAddresses: getLocalIPs(),
+		OS:          info.OS,      // 添加操作系统信息
+		Version:     info.Version, // 添加操作系统版本
 	}
 
 	// 将数据转换为JSON
@@ -241,48 +280,41 @@ func (r *HTTPReporter) Report(ctx context.Context, info *collector.SystemInfo) e
 	return nil
 }
 
-// ConsoleReporter 是将数据输出到控制台的上报器实现
-type ConsoleReporter struct{}
-
-// NewConsoleReporter 创建一个新的控制台数据上报器
-func NewConsoleReporter() Reporter {
-	return &ConsoleReporter{}
-}
-
-// Report 将系统信息输出到控制台
-func (r *ConsoleReporter) Report(ctx context.Context, info *collector.SystemInfo) error {
-	data, err := json.MarshalIndent(info, "", "  ")
-	if err != nil {
-		return fmt.Errorf("序列化系统信息失败: %w", err)
+// Report 将系统信息上报到服务器
+func (r *HTTPReporter) Report(ctx context.Context, info *collector.SystemInfo) error {
+	// 确保客户端已注册
+	if err := r.ensureRegistered(ctx, info); err != nil {
+		return fmt.Errorf("客户端注册或状态更新失败: %w", err)
 	}
 
-	fmt.Println("系统信息收集时间:", info.Timestamp.Format("2006-01-02 15:04:05"))
-	fmt.Println("主机名:", info.Hostname)
-	fmt.Println("平台:", info.Platform, info.OS)
-	fmt.Println("CPU使用率:", info.CPUInfo.Usage, "%")
-	fmt.Println("内存使用率:", info.MemoryInfo.UsageRate, "%")
-	fmt.Println("系统负载:", info.LoadInfo.Load1, info.LoadInfo.Load5, info.LoadInfo.Load15)
-	fmt.Println("详细信息:")
-	fmt.Println(string(data))
+	// 如果注册成功但未直接上报状态（通过客户端已存在的分支），则调用上报
+	if r.registered {
+		return r.reportStatus(ctx, info)
+	}
 
 	return nil
 }
 
-// getLocalIP 获取本地IP地址
-func getLocalIP() string {
+// getLocalIPs 获取所有本地IPv4地址
+func getLocalIPs() []string {
+	ips := []string{}
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		return "未知"
+		return append(ips, "unknown")
 	}
 
 	for _, addr := range addrs {
 		// 检查IP地址类型
 		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String()
+				ips = append(ips, ipnet.IP.String())
 			}
 		}
 	}
 
-	return "未知"
+	if len(ips) == 0 {
+		return append(ips, "unknown")
+	}
+
+	return ips
 }

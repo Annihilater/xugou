@@ -36,7 +36,6 @@ func init() {
 	viper.BindPFlag("server", rootCmd.PersistentFlags().Lookup("server"))
 	viper.BindPFlag("token", rootCmd.PersistentFlags().Lookup("token"))
 	viper.BindPFlag("log_level", rootCmd.PersistentFlags().Lookup("log-level"))
-	viper.BindPFlag("agent_id", rootCmd.PersistentFlags().Lookup("agent-id"))
 }
 
 func initConfig() {
